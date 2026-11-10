@@ -57,12 +57,12 @@ dialog .row{justify-content:flex-end;margin-top:16px}
 <div id="app"></div>
 <dialog id="dlg"></dialog>
 <script type="module">
-import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore,doc,setDoc,onSnapshot,collection,addDoc,query,orderBy,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {initializeApp} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
+import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,signOut} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+import {getFirestore,doc,setDoc,onSnapshot,collection,addDoc,query,orderBy,serverTimestamp} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 
 // 1. Paste your Firebase web app config here (Project settings > Your apps).
-const CFG={apiKey:"YOUR_API_KEY",authDomain:"YOUR_PROJECT.firebaseapp.com",projectId:"YOUR_PROJECT",appId:"YOUR_APP_ID"};
+const CFG={apiKey:"AIzaSyAJioajokVOh_a0DH9vldeCAz2jzTTzMG8",authDomain:"kaulto-investor-dashboard.firebaseapp.com",projectId:"kaulto-investor-dashboard",storageBucket:"kaulto-investor-dashboard.firebasestorage.app",messagingSenderId:"502424779951",appId:"1:502424779951:web:8cfe3de97dcfcc2614685a"};
 
 const $=s=>document.querySelector(s),app=$('#app'),dlg=$('#dlg');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
