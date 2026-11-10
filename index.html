@@ -58,7 +58,7 @@ dialog .row{justify-content:flex-end;margin-top:16px}
 <dialog id="dlg"></dialog>
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
-import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,signOut} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+import {getAuth,onAuthStateChanged,GoogleAuthProvider,signInWithPopup,signOut} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
 import {getFirestore,doc,setDoc,onSnapshot,collection,addDoc,query,orderBy,serverTimestamp} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 
 // 1. Paste your Firebase web app config here (Project settings > Your apps).
@@ -85,7 +85,7 @@ onAuthStateChanged(auth,u=>{
   S={...S,user:u,name:'',set:{...DEF},tx:[],nav:[],ranged:false,view:'portfolio',err:''};
   if(u){
     const ud=doc(db,'users',u.uid);
-    subs.push(onSnapshot(ud,s=>{const d=s.data();if(d){S.name=d.name||'';S.set={...DEF,...d.settings};if(!S.ranged){S.range=S.set.range;S.ranged=true}}render()}));
+    subs.push(onSnapshot(ud,s=>{const d=s.data();if(d){S.name=d.name||'';S.set={...DEF,...d.settings};if(!S.ranged){S.range=S.set.range;S.ranged=true}}else if(!s.metadata.fromCache)setDoc(ud,{name:u.displayName||'',settings:DEF,createdAt:serverTimestamp()});render()}));
     subs.push(onSnapshot(query(collection(ud,'transactions'),orderBy('createdAt','desc')),s=>{S.tx=s.docs.map(d=>({id:d.id,...d.data()}));render()}));
     subs.push(onSnapshot(collection(db,'nav'),s=>{S.nav=s.docs.map(d=>({id:d.id,nav:d.data().nav})).sort((a,b)=>a.id<b.id?-1:1);render()}));
   }
@@ -154,14 +154,8 @@ function render(){
 }
 
 function authView(){
-  const up=S.mode==='up';
-  app.innerHTML=`<main class="auth"><span class="logo big">K</span><h1>${up?'Create your K account':'Sign in to K'}</h1><form id="af">${up?'<label>Name<input name="name" autocomplete="name" required></label>':''}<label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="pw" type="password" autocomplete="${up?'new-password':'current-password'}" minlength="6" required></label><p class="err" role="alert">${S.err}</p><button class="btn dark">${up?'Create account':'Sign in'}</button></form><p><button class="link" id="sw">${up?'Have an account? Sign in':'New to K? Create an account'}</button></p></main>`;
-  $('#sw').onclick=()=>{S.mode=up?'in':'up';S.err='';authView()};
-  $('#af').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);
-    try{
-      if(up){const r=await createUserWithEmailAndPassword(auth,f.get('email'),f.get('pw'));await setDoc(doc(db,'users',r.user.uid),{name:f.get('name').trim(),settings:DEF,createdAt:serverTimestamp()})}
-      else await signInWithEmailAndPassword(auth,f.get('email'),f.get('pw'));
-    }catch(x){S.err={'auth/invalid-credential':'Email or password is wrong.','auth/email-already-in-use':'An account with this email already exists. Sign in instead.','auth/weak-password':'Use a password of at least 6 characters.'}[x.code]||'Something went wrong. Try again.';authView()}};
+  app.innerHTML=`<main class="auth"><span class="logo big">K</span><h1>Sign in to K</h1><p class="mut">Use your Google account to see your portfolio.</p><p class="err" role="alert">${S.err}</p><button class="btn dark" id="g">Continue with Google</button></main>`;
+  $('#g').onclick=async()=>{try{await signInWithPopup(auth,new GoogleAuthProvider())}catch(x){S.err=['auth/popup-closed-by-user','auth/cancelled-popup-request'].includes(x.code)?'':'Google sign-in did not complete. Check that pop-ups are allowed and try again.';authView()}};
 }
 
 function openDlg(type){
