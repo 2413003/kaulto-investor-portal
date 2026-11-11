@@ -87,10 +87,8 @@ onAuthStateChanged(auth,async u=>{
   subs.forEach(f=>f());subs=[];
   S={...S,user:u,name:'',set:{...DEF},tx:[],nav:[],ranged:false,view:'portfolio',err:'',admin:false,denied:false,pend:[],bank:''};
   if(u){
-    try{
-      if(!OPEN&&!(await getDoc(doc(db,'allowed',(u.email||'').toLowerCase()))).exists()){S.denied=true;return render()}
-      S.admin=(await getDoc(doc(db,'admins',u.uid))).exists();
-    }catch{S.denied=true;return render()}
+    if(!OPEN){try{if(!(await getDoc(doc(db,'allowed',(u.email||'').toLowerCase()))).exists()){S.denied=true;return render()}}catch{S.denied=true;return render()}}
+    try{S.admin=(await getDoc(doc(db,'admins',u.uid))).exists()}catch{}
     const ud=doc(db,'users',u.uid);
     subs.push(onSnapshot(ud,s=>{const d=s.data();if(d){S.name=d.name||'';S.set={...DEF,...d.settings};if(!S.ranged){S.range=S.set.range;S.ranged=true}}else if(!s.metadata.fromCache)setDoc(ud,{name:u.displayName||'',settings:DEF,createdAt:serverTimestamp()});render()}));
     subs.push(onSnapshot(query(collection(ud,'transactions'),orderBy('createdAt','desc')),s=>{S.tx=s.docs.map(d=>({id:d.id,...d.data()}));render()}));
