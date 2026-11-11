@@ -118,9 +118,9 @@ function calc(){
   return{pd,value,invested,avail:value-pend,pts,delta,pc,ret:value-invested,retPc:invested>0?(value-invested)/invested*100:0}
 }
 
-function txList(n){
-  const l=n?S.tx.slice(0,n):S.tx;
-  if(!l.length)return`<p class="mut">No deposits or withdrawals yet. Make a deposit to start.</p>`;
+function txList(n,f){
+  const l=(f?S.tx.filter(f):S.tx).slice(0,n||1e9);
+  if(!l.length)return`<p class="mut">${f?'Nothing pending.':'No deposits or withdrawals yet. Make a deposit to start.'}</p>`;
   return l.map(t=>`<div class="tx"><div><b>${t.type==='deposit'?'Deposit':'Withdrawal'}</b><div class="mut">${day(t.createdAt?.toDate?.()??new Date())}</div></div><div style="text-align:right"><b>${t.type==='deposit'?'+':'−'}${money(t.amount)}</b><div><span class="chip ${t.status}">${t.status[0].toUpperCase()+t.status.slice(1)}</span></div></div></div>`).join('');
 }
 
@@ -144,16 +144,17 @@ function render(){
   if(!S.user)return authView();
   if(S.denied)return deniedView();
   const c=calc(),v=S.view,n=S.nav,fp=n.length>1?(n.at(-1).nav/n[0].nav-1)*100:null;
-  const nav=[['portfolio','Portfolio'],['activity','Activity'],['settings','Settings'],...(S.admin?[['admin','Admin']]:[])].map(([k,l])=>`<button data-v="${k}" ${v===k?'aria-current="page"':''}>${l}</button>`).join('');
+  const nav=[['portfolio','Portfolio'],['funds','Manage funds'],['activity','Activity'],['settings','Settings'],...(S.admin?[['admin','Admin']]:[])].map(([k,l])=>`<button data-v="${k}" ${v===k?'aria-current="page"':''}>${l}</button>`).join('');
   let body='';
   if(v==='portfolio')body=`
     <h1>${esc(S.name?S.name+'’s portfolio':'Your portfolio')}</h1>
     <div class="big-n">${money(c.value)}</div>${c.pd?`<div class="mut">${money(c.pd)} deposit pending</div>`:''}
     <div id="tip" class="${cls(c.delta)}">${c.pts.length>1?sgn(c.delta)+' ('+(c.pc>=0?'+':'')+c.pc.toFixed(2)+'%) in this period':'<span class="mut">No performance yet</span>'}</div>
-    <div class="row" style="margin-top:16px"><button class="btn dark" data-d="deposit">Deposit</button><button class="btn" data-d="withdrawal">Withdraw</button></div>
+    <div class="row" style="margin-top:16px"><button class="btn dark" data-d="deposit">Deposit</button></div>
     <div class="card">${chart(c.pts)}<div class="ranges">${Object.keys(DAYS).map(r=>`<button data-r="${r}" aria-pressed="${S.range===r}">${r}</button>`).join('')}</div></div>
     <div class="card stats"><div><span class="mut">Total return</span><b class="${cls(c.ret)}">${sgn(c.ret)}</b><span class="mut ${cls(c.ret)}">${c.retPc>=0?'+':''}${c.retPc.toFixed(2)}%</span></div><div><span class="mut">Money paid in</span><b>${money(c.invested)}</b></div><div><span class="mut">Available to withdraw</span><b>${money(c.avail)}</b></div><div><span class="mut">Fund since launch</span><b class="${cls(fp)}">${fp==null?'–':(fp>=0?'+':'')+fp.toFixed(2)+'%'}</b></div></div>
     <div class="card"><h2>Recent activity</h2>${txList(5)}</div>`;
+  else if(v==='funds')body=`<h1>Manage funds</h1><div class="card"><span class="mut">Available to withdraw</span><b style="display:block;font-size:26px;letter-spacing:-.02em">${money(c.avail)}</b><div class="row" style="margin-top:14px"><button class="btn dark" data-d="deposit">Deposit</button><button class="btn" data-d="withdrawal">Withdraw</button></div></div><div class="card"><h2>Pending requests</h2>${txList(0,t=>t.status==='pending')}</div>`;
   else if(v==='activity')body=`<h1>Activity</h1><div class="row"><button class="btn" id="csv">Download CSV</button><button class="btn" id="prt">Print statement</button></div><div class="card">${txList()}</div>`;
   else if(v==='admin')body=adminView();
   else body=`<h1>Settings</h1><form class="card" id="sf"><label>Name<input name="name" value="${esc(S.name)}" autocomplete="name"></label><label>Currency<select name="currency">${['GBP','USD','EUR'].map(x=>`<option ${S.set.currency===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Default chart range<select name="range">${Object.keys(DAYS).map(x=>`<option ${S.set.range===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Payout account for withdrawals<input name="payout" value="${esc(S.set.payout||'')}" placeholder="Account name, sort code, account number"></label><label><input type="checkbox" name="hide" ${S.set.hide?'checked':''}>Hide balances</label><p class="mut" id="sv">Changes save to your account automatically. Signed in as ${esc(S.user.email)}.</p></form>`;
