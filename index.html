@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>K</title>
+<title>Kaulto</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='16' fill='%23000'/><path fill='%23fff' d='M18 13h9v38h-9zM22 37L43 13h11L33 38zM30 30l24 21H42.500L22 39z'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
@@ -51,6 +52,7 @@ input[type=checkbox]{width:auto;display:inline;margin:0 8px 0 0}
 dialog{border:0;border-radius:20px;padding:24px;width:min(400px,92vw)}
 dialog::backdrop{background:rgba(0,0,0,.4)}
 dialog .row{justify-content:flex-end;margin-top:16px}
+@media print{.top,.btn,.ranges,.row{display:none!important}body{background:#fff}.card{border:1px solid #ddd}}
 </style>
 </head>
 <body>
@@ -59,16 +61,17 @@ dialog .row{justify-content:flex-end;margin-top:16px}
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,GoogleAuthProvider,signInWithPopup,signOut} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
-import {getFirestore,doc,setDoc,onSnapshot,collection,addDoc,query,orderBy,serverTimestamp} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
+import {getFirestore,doc,setDoc,onSnapshot,collection,addDoc,query,orderBy,serverTimestamp,getDoc,updateDoc,collectionGroup,where} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 
 // 1. Paste your Firebase web app config here (Project settings > Your apps).
 const CFG={apiKey:"AIzaSyAJioajokVOh_a0DH9vldeCAz2jzTTzMG8",authDomain:"kaulto-investor-dashboard.firebaseapp.com",projectId:"kaulto-investor-dashboard",storageBucket:"kaulto-investor-dashboard.firebasestorage.app",messagingSenderId:"502424779951",appId:"1:502424779951:web:8cfe3de97dcfcc2614685a"};
 
 const $=s=>document.querySelector(s),app=$('#app'),dlg=$('#dlg');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const OPEN=true; // true: any Google account can sign up. false: only emails approved in Admin.
 const DEF={currency:'GBP',range:'1Y',hide:false};
 const DAYS={'1W':7,'1M':30,'3M':91,'1Y':365,'ALL':1e9};
-let S={user:null,name:'',set:{...DEF},tx:[],nav:[],range:'1Y',ranged:false,view:'portfolio',mode:'in',err:''},subs=[];
+let S={user:null,name:'',set:{...DEF},tx:[],nav:[],range:'1Y',ranged:false,view:'portfolio',mode:'in',err:'',admin:false,denied:false,pend:[],bank:''},subs=[];
 const fmt=n=>new Intl.NumberFormat('en-GB',{style:'currency',currency:S.set.currency}).format(n);
 const money=n=>S.set.hide?'••••':fmt(n);
 const sgn=n=>(n<0?'−':'+')+money(Math.abs(n));
@@ -80,14 +83,20 @@ if(CFG.apiKey.startsWith('YOUR_')){
 }else{
 const fb=initializeApp(CFG),auth=getAuth(fb),db=getFirestore(fb);
 
-onAuthStateChanged(auth,u=>{
+onAuthStateChanged(auth,async u=>{
   subs.forEach(f=>f());subs=[];
-  S={...S,user:u,name:'',set:{...DEF},tx:[],nav:[],ranged:false,view:'portfolio',err:''};
+  S={...S,user:u,name:'',set:{...DEF},tx:[],nav:[],ranged:false,view:'portfolio',err:'',admin:false,denied:false,pend:[],bank:''};
   if(u){
+    try{
+      if(!OPEN&&!(await getDoc(doc(db,'allowed',(u.email||'').toLowerCase()))).exists()){S.denied=true;return render()}
+      S.admin=(await getDoc(doc(db,'admins',u.uid))).exists();
+    }catch{S.denied=true;return render()}
     const ud=doc(db,'users',u.uid);
     subs.push(onSnapshot(ud,s=>{const d=s.data();if(d){S.name=d.name||'';S.set={...DEF,...d.settings};if(!S.ranged){S.range=S.set.range;S.ranged=true}}else if(!s.metadata.fromCache)setDoc(ud,{name:u.displayName||'',settings:DEF,createdAt:serverTimestamp()});render()}));
     subs.push(onSnapshot(query(collection(ud,'transactions'),orderBy('createdAt','desc')),s=>{S.tx=s.docs.map(d=>({id:d.id,...d.data()}));render()}));
     subs.push(onSnapshot(collection(db,'nav'),s=>{S.nav=s.docs.map(d=>({id:d.id,nav:d.data().nav})).sort((a,b)=>a.id<b.id?-1:1);render()}));
+    subs.push(onSnapshot(doc(db,'config','bank'),s=>{S.bank=s.data()?.text||''}));
+    if(S.admin)subs.push(onSnapshot(query(collectionGroup(db,'transactions'),where('status','==','pending')),s=>{S.pend=s.docs.map(d=>({ref:d.ref,...d.data()}));render()},e=>{S.err='Pending list failed: '+e.message;render()}));
   }
   render();
 });
@@ -102,13 +111,14 @@ function calc(){
   let pts=all.filter(p=>p.t>=Date.now()-DAYS[S.range]*864e5);if(pts.length<2)pts=all.slice(-2);
   let delta=0,pc=0;
   if(pts.length>1){const a=pts[0],b=pts.at(-1),flow=done.filter(x=>ms(x)>a.t&&ms(x)<=b.t).reduce((s,x)=>s+f(x)*x.amount,0);delta=b.v-a.v-flow;pc=a.v?delta/a.v*100:0}
-  return{value,invested,avail:value-pend,pts,delta,pc,ret:value-invested,retPc:invested>0?(value-invested)/invested*100:0}
+  const pd=S.tx.filter(t=>t.status==='pending'&&t.type==='deposit').reduce((x,t)=>x+t.amount,0);
+  return{pd,value,invested,avail:value-pend,pts,delta,pc,ret:value-invested,retPc:invested>0?(value-invested)/invested*100:0}
 }
 
 function txList(n){
   const l=n?S.tx.slice(0,n):S.tx;
   if(!l.length)return`<p class="mut">No deposits or withdrawals yet. Make a deposit to start.</p>`;
-  return l.map(t=>`<div class="tx"><div><b>${t.type==='deposit'?'Deposit':'Withdrawal'}</b><div class="mut">${day(t.createdAt?.toDate?.()??new Date())}</div></div><div style="text-align:right"><b>${t.type==='deposit'?'+':'−'}${money(t.amount)}</b><div><span class="chip ${t.status}">${t.status==='completed'?'Completed':'Pending'}</span></div></div></div>`).join('');
+  return l.map(t=>`<div class="tx"><div><b>${t.type==='deposit'?'Deposit':'Withdrawal'}</b><div class="mut">${day(t.createdAt?.toDate?.()??new Date())}</div></div><div style="text-align:right"><b>${t.type==='deposit'?'+':'−'}${money(t.amount)}</b><div><span class="chip ${t.status}">${t.status[0].toUpperCase()+t.status.slice(1)}</span></div></div></div>`).join('');
 }
 
 function chart(pts){
@@ -129,27 +139,31 @@ function hover(pts){
 
 function render(){
   if(!S.user)return authView();
-  const c=calc(),v=S.view;
-  const nav=[['portfolio','Portfolio'],['activity','Activity'],['settings','Settings']].map(([k,l])=>`<button data-v="${k}" ${v===k?'aria-current="page"':''}>${l}</button>`).join('');
+  if(S.denied)return deniedView();
+  const c=calc(),v=S.view,n=S.nav,fp=n.length>1?(n.at(-1).nav/n[0].nav-1)*100:null;
+  const nav=[['portfolio','Portfolio'],['activity','Activity'],['settings','Settings'],...(S.admin?[['admin','Admin']]:[])].map(([k,l])=>`<button data-v="${k}" ${v===k?'aria-current="page"':''}>${l}</button>`).join('');
   let body='';
   if(v==='portfolio')body=`
     <h1>${esc(S.name?S.name+'’s portfolio':'Your portfolio')}</h1>
-    <div class="big-n">${money(c.value)}</div>
+    <div class="big-n">${money(c.value)}</div>${c.pd?`<div class="mut">${money(c.pd)} deposit pending</div>`:''}
     <div id="tip" class="${cls(c.delta)}">${c.pts.length>1?sgn(c.delta)+' ('+(c.pc>=0?'+':'')+c.pc.toFixed(2)+'%) in this period':'<span class="mut">No performance yet</span>'}</div>
     <div class="row" style="margin-top:16px"><button class="btn dark" data-d="deposit">Deposit</button><button class="btn" data-d="withdrawal">Withdraw</button></div>
     <div class="card">${chart(c.pts)}<div class="ranges">${Object.keys(DAYS).map(r=>`<button data-r="${r}" aria-pressed="${S.range===r}">${r}</button>`).join('')}</div></div>
-    <div class="card stats"><div><span class="mut">Total return</span><b class="${cls(c.ret)}">${sgn(c.ret)}</b><span class="mut ${cls(c.ret)}">${c.retPc>=0?'+':''}${c.retPc.toFixed(2)}%</span></div><div><span class="mut">Money paid in</span><b>${money(c.invested)}</b></div><div><span class="mut">Available to withdraw</span><b>${money(c.avail)}</b></div></div>
+    <div class="card stats"><div><span class="mut">Total return</span><b class="${cls(c.ret)}">${sgn(c.ret)}</b><span class="mut ${cls(c.ret)}">${c.retPc>=0?'+':''}${c.retPc.toFixed(2)}%</span></div><div><span class="mut">Money paid in</span><b>${money(c.invested)}</b></div><div><span class="mut">Available to withdraw</span><b>${money(c.avail)}</b></div><div><span class="mut">Fund since launch</span><b class="${cls(fp)}">${fp==null?'–':(fp>=0?'+':'')+fp.toFixed(2)+'%'}</b></div></div>
     <div class="card"><h2>Recent activity</h2>${txList(5)}</div>`;
-  else if(v==='activity')body=`<h1>Activity</h1><div class="card">${txList()}</div>`;
-  else body=`<h1>Settings</h1><form class="card" id="sf"><label>Name<input name="name" value="${esc(S.name)}" autocomplete="name"></label><label>Currency<select name="currency">${['GBP','USD','EUR'].map(x=>`<option ${S.set.currency===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Default chart range<select name="range">${Object.keys(DAYS).map(x=>`<option ${S.set.range===x?'selected':''}>${x}</option>`).join('')}</select></label><label><input type="checkbox" name="hide" ${S.set.hide?'checked':''}>Hide balances</label><p class="mut" id="sv">Changes save to your account automatically. Signed in as ${esc(S.user.email)}.</p></form>`;
+  else if(v==='activity')body=`<h1>Activity</h1><div class="row"><button class="btn" id="csv">Download CSV</button><button class="btn" id="prt">Print statement</button></div><div class="card">${txList()}</div>`;
+  else if(v==='admin')body=adminView();
+  else body=`<h1>Settings</h1><form class="card" id="sf"><label>Name<input name="name" value="${esc(S.name)}" autocomplete="name"></label><label>Currency<select name="currency">${['GBP','USD','EUR'].map(x=>`<option ${S.set.currency===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Default chart range<select name="range">${Object.keys(DAYS).map(x=>`<option ${S.set.range===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Payout account for withdrawals<input name="payout" value="${esc(S.set.payout||'')}" placeholder="Account name, sort code, account number"></label><label><input type="checkbox" name="hide" ${S.set.hide?'checked':''}>Hide balances</label><p class="mut" id="sv">Changes save to your account automatically. Signed in as ${esc(S.user.email)}.</p></form>`;
   app.innerHTML=`<div class="wrap"><header class="top"><span class="logo">K</span><nav>${nav}</nav><button class="link" id="so">Sign out</button></header>${body}</div>`;
   app.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>{S.view=b.dataset.v;render()});
-  app.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>{S.range=b.dataset.r;render()});
+  app.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>{S.range=b.dataset.r;setDoc(doc(db,'users',S.user.uid),{settings:{...S.set,range:S.range}},{merge:true});render()});
   app.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>openDlg(b.dataset.d));
   $('#so').onclick=()=>signOut(auth);
   if(v==='portfolio')hover(c.pts);
+  if(v==='activity'){$('#csv').onclick=csv;$('#prt').onclick=()=>print()}
+  if(v==='admin')bindAdmin();
   const sf=$('#sf');if(sf)sf.onchange=async()=>{const f=new FormData(sf);
-    await setDoc(doc(db,'users',S.user.uid),{name:f.get('name').trim(),settings:{currency:f.get('currency'),range:f.get('range'),hide:!!f.get('hide')}},{merge:true});
+    await setDoc(doc(db,'users',S.user.uid),{name:f.get('name').trim(),settings:{currency:f.get('currency'),range:f.get('range'),hide:!!f.get('hide'),payout:f.get('payout').trim()}},{merge:true});
     const sv=$('#sv');if(sv)sv.textContent='Saved to your account.'};
 }
 
@@ -158,40 +172,54 @@ function authView(){
   $('#g').onclick=async()=>{try{await signInWithPopup(auth,new GoogleAuthProvider())}catch(x){S.err=['auth/popup-closed-by-user','auth/cancelled-popup-request'].includes(x.code)?'':'Google sign-in did not complete. Check that pop-ups are allowed and try again.';authView()}};
 }
 
+function csv(){const r=['Date,Type,Amount,Status',...S.tx.map(t=>[(t.createdAt?.toDate?.()??new Date()).toISOString().slice(0,10),t.type,t.amount,t.status].join(','))].join('\n'),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([r],{type:'text/csv'}));a.download='k-activity.csv';a.click()}
+
+function deniedView(){app.innerHTML=`<main class="auth"><span class="logo big">K</span><h1>Account not approved yet</h1><p class="mut">${esc(S.user.email)} isn’t on K’s approved list. Ask K to add this email, then sign in again.</p><button class="btn" id="so">Sign out</button></main>`;$('#so').onclick=()=>signOut(auth)}
+
+function adminView(){
+  const px=S.pend.map((t,i)=>`<div class="tx"><div><b>${esc(t.name||'')} <span class="mut">${esc(t.email||'')}</span></b><div class="mut">${t.type==='deposit'?'Deposit':'Withdrawal'} · ${fmt(t.amount)}</div></div><div class="row"><button class="btn dark" data-ok="${i}">Confirm</button><button class="btn" data-no="${i}">Reject</button></div></div>`).join('')||'<p class="mut">No pending requests.</p>',l=S.nav.at(-1);
+  return`<h1>Admin</h1><div class="card"><h2>Pending requests</h2><p class="err">${esc(S.err)}</p>${px}</div>
+  <form class="card" id="nf"><h2>Daily price</h2><label>Date<input type="date" name="d" value="${new Date().toISOString().slice(0,10)}" required></label><label>Price per unit<input name="p" type="number" step="0.0001" min="0.0001" required></label><button class="btn dark" style="margin-top:14px">Save price</button><p class="mut">Latest saved: ${l?l.id+' at '+l.nav:'none yet'}. Confirmations use the latest price.</p></form>
+  <form class="card" id="af2"><h2>Approve an investor</h2><label>Google account email<input name="e" type="email" required></label><button class="btn dark" style="margin-top:14px">Approve</button><p class="mut" id="am"></p></form>
+  <form class="card" id="bf"><h2>Bank details shown on deposits</h2><label>Details<input name="b" value="${esc(S.bank)}" placeholder="Account name, sort code, account number"></label><button class="btn dark" style="margin-top:14px">Save details</button></form>`;
+}
+function bindAdmin(){
+  const l=S.nav.at(-1),act=(i,ok)=>{const t=S.pend[i];if(!ok)return updateDoc(t.ref,{status:'rejected'});if(!l){S.err='Save a price first.';return render()}S.err='';return updateDoc(t.ref,{status:'completed',units:Math.round(t.amount/l.nav*1e6)/1e6,completedAt:serverTimestamp()})};
+  app.querySelectorAll('[data-ok]').forEach(b=>b.onclick=()=>act(+b.dataset.ok,1));
+  app.querySelectorAll('[data-no]').forEach(b=>b.onclick=()=>act(+b.dataset.no,0));
+  $('#nf').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);await setDoc(doc(db,'nav',f.get('d')),{nav:parseFloat(f.get('p'))})};
+  $('#af2').onsubmit=async e=>{e.preventDefault();const m=new FormData(e.target).get('e').trim().toLowerCase();await setDoc(doc(db,'allowed',m),{addedAt:serverTimestamp()});$('#am').textContent=m+' approved.';e.target.reset()};
+  $('#bf').onsubmit=async e=>{e.preventDefault();await setDoc(doc(db,'config','bank'),{text:new FormData(e.target).get('b').trim()})};
+}
+
 function openDlg(type){
-  const dep=type==='deposit',c=calc(),ref='K-'+S.user.uid.slice(0,6).toUpperCase();
-  dlg.innerHTML=`<form id="mf"><h2>${dep?'Deposit':'Withdraw'}</h2><label>Amount (${S.set.currency})<input name="a" type="number" min="1" step="0.01" inputmode="decimal" required></label><p class="mut">${dep?`Send your transfer to K with the reference ${ref}. Your balance updates once K confirms it.`:`You can withdraw up to ${fmt(Math.max(0,c.avail))}. K confirms each withdrawal before it leaves your balance.`}</p><p class="err" role="alert"></p><div class="row"><button type="button" class="btn" id="cx">Cancel</button><button class="btn dark">${dep?'Request deposit':'Request withdrawal'}</button></div></form>`;
-  dlg.showModal();$('#cx').onclick=()=>dlg.close();
-  $('#mf').onsubmit=async e=>{e.preventDefault();const a=Math.round(parseFloat(new FormData(e.target).get('a'))*100)/100,er=dlg.querySelector('.err');
-    if(!(a>0)){er.textContent='Enter an amount above zero.';return}
-    if(!dep&&a>c.avail+1e-9){er.textContent=`You can withdraw up to ${fmt(Math.max(0,c.avail))}.`;return}
-    try{await addDoc(collection(db,'users',S.user.uid,'transactions'),{type,amount:a,status:'pending',createdAt:serverTimestamp()});dlg.close()}
-    catch{er.textContent='The request did not send. Check your connection and try again.'}};
+  const dep=type==='deposit',c=calc(),ref='K-'+S.user.uid.slice(0,6).toUpperCase(),max=Math.max(0,c.avail);
+  let a=0;
+  const row=(t,l)=>`<div class="tx"><div><span class="mut">${l}</span><br><b>${esc(t)}</b></div><button type="button" class="link" data-c="${esc(t)}">Copy</button></div>`;
+  const det=()=>dep?(S.bank?row(S.bank,'Send to'):'<p class="err">K hasn’t added bank details yet.</p>')+row(ref,'Payment reference'):row(S.set.payout,'Paid to');
+  const wire=()=>{dlg.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{navigator.clipboard?.writeText(b.dataset.c);b.textContent='Copied'});const x=$('#cx');if(x)x.onclick=()=>dlg.close()};
+  const step1=()=>{
+    dlg.innerHTML=`<form id="mf"><h2>${dep?'Deposit':'Withdraw'}</h2><label>Amount (${S.set.currency})<input name="a" type="number" min="1" step="0.01" inputmode="decimal" value="${a||''}" required></label>${dep?'':`<p class="mut">${fmt(max)} available. <button type="button" class="link" id="all">Withdraw all</button></p>`}<p class="err" role="alert"></p><div class="row"><button type="button" class="btn" id="cx">Cancel</button><button class="btn dark">Continue</button></div></form>`;wire();
+    if(!dep)$('#all').onclick=()=>{dlg.querySelector('[name=a]').value=max.toFixed(2)};
+    $('#mf').onsubmit=e=>{e.preventDefault();a=Math.round(parseFloat(new FormData(e.target).get('a'))*100)/100;const er=dlg.querySelector('.err');
+      if(!(a>0))return er.textContent='Enter an amount above zero.';
+      if(!dep&&a>max+1e-9)return er.textContent=`You can withdraw up to ${fmt(max)}.`;
+      if(!dep&&!S.set.payout)return er.textContent='Add a payout account in Settings first.';
+      step2()};
+  };
+  const step2=()=>{
+    dlg.innerHTML=`<form id="mf"><h2>Review ${dep?'deposit':'withdrawal'}</h2><div class="big-n" style="font-size:34px">${fmt(a)}</div>${det()}<p class="mut">${dep?'Make the bank transfer using this reference. Your balance updates once K confirms it arrived.':'K confirms the withdrawal before it leaves your balance.'}</p><p class="err" role="alert"></p><div class="row"><button type="button" class="btn" id="bk">Back</button><button class="btn dark">${dep?'Deposit':'Withdraw'} ${fmt(a)}</button></div></form>`;wire();$('#bk').onclick=step1;
+    $('#mf').onsubmit=async e=>{e.preventDefault();
+      try{await addDoc(collection(db,'users',S.user.uid,'transactions'),{type,amount:a,status:'pending',createdAt:serverTimestamp(),name:S.name,email:S.user.email});step3()}
+      catch{dlg.querySelector('.err').textContent='That didn’t go through. Check your connection and try again.'}};
+  };
+  const step3=()=>{
+    dlg.innerHTML=`<div><h2>${dep?'Deposit':'Withdrawal'} started</h2><p><b>${fmt(a)}</b> is pending. ${dep?'Send the transfer using the details below. It shows in your balance once K confirms it.':'It stays pending in Activity until K confirms it.'}</p>${dep?det():''}<div class="row"><button class="btn dark" id="cx">Done</button></div></div>`;wire();
+  };
+  step1();dlg.showModal();
 }
 }
 </script>
 </body>
 </html>
-<!--
-DATA MODEL (Firestore)
-  users/{uid}                      { name, settings:{currency,range,hide}, createdAt }   written by the user
-  users/{uid}/transactions/{id}    user creates: { type:'deposit'|'withdrawal', amount, status:'pending', createdAt }
-                                   K completes it (console or Admin SDK): status:'completed', units, completedAt (timestamp)
-  nav/{YYYY-MM-DD}                 { nav: price per unit } written by K only. Portfolio value = your units x latest nav.
-
-FIRESTORE RULES (users can never write balances, units or nav)
-rules_version = '2';
-service cloud.firestore { match /databases/{db}/documents {
-  match /users/{uid} {
-    allow read: if request.auth.uid == uid;
-    allow create, update: if request.auth.uid == uid && request.resource.data.keys().hasOnly(['name','settings','createdAt']);
-    match /transactions/{id} {
-      allow read: if request.auth.uid == uid;
-      allow create: if request.auth.uid == uid && request.resource.data.keys().hasOnly(['type','amount','status','createdAt'])
-        && request.resource.data.status == 'pending' && request.resource.data.type in ['deposit','withdrawal']
-        && request.resource.data.amount is number && request.resource.data.amount > 0;
-    }
-  }
-  match /nav/{d} { allow read: if request.auth != null; }
-}}
--->
+<!-- Firestore rules: see the Rules tab in the Firebase console. -->
